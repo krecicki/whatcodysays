@@ -148,34 +148,48 @@ def store_search_results(query, results, gpt_relevance):
     # Store in LanceDB
     table.add(new_df)
 
-def similarity_search(query, top_k=10):
+def similarity_search(query, top_k=10, similarity_threshold=0.95):
     global search_results_df
     
     if search_results_df.empty:
         return [], None
     
-    # Create TF-IDF vectors for stored queries and the new query
+    # Normalize queries
+    query = query.lower().strip()
+    search_results_df['normalized_query'] = search_results_df['query'].str.lower().str.strip()
+    
+    # Check for exact matches first
+    exact_matches = search_results_df[search_results_df['normalized_query'] == query]
+    if not exact_matches.empty:
+        results = exact_matches.head(top_k).drop(['normalized_query'], axis=1)
+        gpt_relevance = results.iloc[0]['gpt_relevance']
+        return results.drop('gpt_relevance', axis=1).to_dict('records'), gpt_relevance
+    
+    # If no exact match, use TF-IDF and cosine similarity for near-identical matches
     vectorizer = TfidfVectorizer()
-    stored_vectors = vectorizer.fit_transform(search_results_df['query'])
+    stored_vectors = vectorizer.fit_transform(search_results_df['normalized_query'])
     query_vector = vectorizer.transform([query])
     
-    # Calculate cosine similarity
     similarities = cosine_similarity(query_vector, stored_vectors)[0]
     
-    # Add similarity scores to the dataframe
     search_results_df['similarity'] = similarities
     
+    # Filter results based on the very high similarity threshold
+    similar_results = search_results_df[search_results_df['similarity'] >= similarity_threshold]
+    
+    if similar_results.empty:
+        return [], None
+    
     # Sort by similarity and get top_k results
-    similar_results = search_results_df.sort_values('similarity', ascending=False).head(top_k)
+    similar_results = similar_results.sort_values('similarity', ascending=False).head(top_k)
     
-    # Get the GPT relevance from the most similar result
-    gpt_relevance = similar_results.iloc[0]['gpt_relevance'] if not similar_results.empty else None
+    gpt_relevance = similar_results.iloc[0]['gpt_relevance']
     
-    # Prepare results without the GPT relevance column
-    results_list = similar_results.drop(['similarity', 'gpt_relevance'], axis=1).to_dict('records')
+    # Prepare results
+    results_list = similar_results.drop(['similarity', 'gpt_relevance', 'normalized_query'], axis=1).to_dict('records')
     
-    # Reset the similarity column in the original dataframe
-    search_results_df = search_results_df.drop('similarity', axis=1)
+    # Clean up temporary columns
+    search_results_df = search_results_df.drop(['similarity', 'normalized_query'], axis=1)
     
     return results_list, gpt_relevance
 
