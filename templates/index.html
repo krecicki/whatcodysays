@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multi-Engine Search</title>
+    <title>WhatCodySays Search Engine</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     <style>
@@ -42,8 +42,9 @@
 </head>
 <body class="min-h-screen bg-gray-100">
     <div class="search-container text-white py-16 px-4 sm:px-6 lg:px-8">
-        <div class="max-w-3xl mx-auto">
-            <h1 class="text-4xl font-bold mb-2 text-center">Multi-Engine Search</h1>
+        <div class="max-w-xl mx-auto text-center">
+            <img src="{{ url_for('static', filename='images/logo.png') }}" alt="logo">
+            <h1 class="text-2xl font-bold mb-2 text-center">Ad-Free & Private</h1>
             <p class="text-xl text-center mb-8">Powered by Google, DuckDuckGo, and Groq</p>
             <form id="searchForm" class="mt-8">
                 <div class="flex items-center border-b-2 border-white py-2">
@@ -70,16 +71,15 @@
             <p class="text-lg text-green-600 font-medium">Results retrieved from cache</p>
         </div>
 
-        <div id="gptRelevance" class="bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-4 mb-6 rounded-lg shadow-sm hidden">
-            <h2 class="text-lg font-semibold mb-2">What Cody says..</h2>
-            <div id="gptContent" class="text-sm"></div>
-        </div>
-
         <div id="youtubeResults" class="mb-8 hidden">
-            <h2 class="text-xl font-semibold mb-3 text-gray-800">YouTube Results</h2>
             <div class="youtube-results-container pb-2">
                 <!-- YouTube results will be inserted here -->
             </div>
+        </div>
+
+        <div id="gptRelevance" class="bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-4 mb-6 rounded-lg shadow-sm hidden">
+            <h2 class="text-lg font-semibold mb-2">What Cody says..</h2>
+            <div id="gptContent" class="text-sm"></div>
         </div>
 
         <div id="results" class="space-y-4">
