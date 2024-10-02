@@ -1,5 +1,5 @@
 import time
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, abort, redirect, url_for
 from googlesearch import search as google_search
 from duckduckgo_search import DDGS
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,6 +14,8 @@ import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import TfidfVectorizer
 import pyarrow as pa
+from slugify import slugify
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -26,21 +28,70 @@ client = OpenAI(
 )
 
 # Set up LanceDB
-db = lancedb.connect("./lancedb")
-schema = pa.schema([
-    ('query', pa.string()),
-    ('url', pa.string()),
-    ('title', pa.string()),
-    ('description', pa.string()),
-    ('content_preview', pa.string()),
-    ('body', pa.string()),
-    ('source', pa.string()),
-    ('gpt_relevance', pa.string())  # New column for GPT relevance
-])
-table = db.create_table("search_results", schema=schema, mode="overwrite")
+db_path = os.path.join(os.getcwd(), "lancedb")
+db = lancedb.connect(db_path)
+
+if "search_results" not in db.table_names():
+    schema = pa.schema([
+        ('query', pa.string()),
+        ('url', pa.string()),
+        ('title', pa.string()),
+        ('description', pa.string()),
+        ('content_preview', pa.string()),
+        ('body', pa.string()),
+        ('source', pa.string()),
+        ('gpt_relevance', pa.string()),
+        ('slug', pa.string()),
+        ('is_blog_post', pa.bool_()),
+        ('publish_date', pa.string())  # Change to microsecond precision
+    ])
+    table = db.create_table("search_results", schema=schema)
+else:
+    table = db.open_table("search_results")
 
 # Load existing data from LanceDB into a pandas DataFrame
 search_results_df = table.to_pandas()
+
+print(f"Loaded {len(search_results_df)} rows from LanceDB")
+
+from flask import render_template
+from datetime import datetime
+
+@app.route('/blog')
+def blog():
+    global search_results_df
+    
+    # Convert publish_date to datetime objects
+    search_results_df['publish_date'] = pd.to_datetime(search_results_df['publish_date'])
+    
+    # Sort by publish_date in descending order and get unique entries
+    posts = search_results_df.sort_values('publish_date', ascending=False).drop_duplicates(subset=['query']).to_dict('records')
+    
+    # Ensure all required fields are present and format dates
+    for post in posts:
+        post['query'] = post.get('query', 'Untitled Search')
+        post['gpt_relevance'] = post.get('gpt_relevance', 'No AI-generated insights available.')
+        post['slug'] = post.get('slug', 'default-slug')
+        post['publish_date'] = post['publish_date'].strftime('%Y-%m-%d')
+    
+    return render_template('blog.html', posts=posts)
+
+@app.route('/blog/<slug>')
+def blog_post(slug):
+    global search_results_df
+    
+    post = search_results_df[search_results_df['slug'] == slug].iloc[0].to_dict()
+    query = post['query']
+    all_results = search_results_df[search_results_df['query'] == query].to_dict('records')
+    
+    # Get YouTube results
+    yt_results = YoutubeSearch(query, max_results=4).to_dict()
+    
+    # Get the GPT relevance
+    gpt_relevance = post['gpt_relevance']
+    print(gpt_relevance)
+    
+    return render_template('article.html', post=post, results=all_results, youtube_results=yt_results, gpt_relevance=gpt_relevance, result_count=len(all_results))
 
 def youtube_results(terms):
     start_time = time.time()
@@ -131,6 +182,7 @@ Next Steps: [Suggestion for what the user should do next with a url]"""
 def store_search_results(query, results, gpt_relevance):
     global search_results_df
     data = []
+    current_time = datetime.now().isoformat()
     for result in results:
         data.append({
             "query": query,
@@ -140,13 +192,25 @@ def store_search_results(query, results, gpt_relevance):
             "content_preview": result.get('content_preview', ''),
             "body": result.get('body', ''),
             "source": result.get('source', ''),
-            "gpt_relevance": gpt_relevance  # Store GPT relevance for each result
+            "gpt_relevance": gpt_relevance,
+            "slug": slugify(result.get('title', '')),
+            "is_blog_post": False,
+            "publish_date": current_time
         })
     new_df = pd.DataFrame(data)
-    search_results_df = pd.concat([search_results_df, new_df], ignore_index=True)
     
-    # Store in LanceDB
-    table.add(new_df)
+    try:
+        # Store in LanceDB
+        table.add(data)
+        
+        # Update the in-memory DataFrame
+        search_results_df = pd.concat([search_results_df, new_df], ignore_index=True)
+        
+        print(f"Added {len(new_df)} new rows to LanceDB. Total rows: {len(search_results_df)}")
+    except Exception as e:
+        print(f"Error adding data to LanceDB: {str(e)}")
+        print(f"Data sample: {data[0] if data else 'No data'}")
+
 
 def similarity_search(query, top_k=10, similarity_threshold=0.95):
     global search_results_df
@@ -192,17 +256,6 @@ def similarity_search(query, top_k=10, similarity_threshold=0.95):
     search_results_df = search_results_df.drop(['similarity', 'normalized_query'], axis=1)
     
     return results_list, gpt_relevance
-
-@app.route('/youtube_search', methods=['POST'])
-def youtube_search():
-    start_time = time.time()
-    query = request.form['query']
-    
-    # Get YouTube results
-    yt_results = YoutubeSearch(query, max_results=10).to_dict()
-    
-    print(f"YouTube search route took {time.time() - start_time:.2f} seconds")
-    return jsonify({'youtube_results': yt_results})
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -259,8 +312,22 @@ def index():
             print(f"Error occurred: {str(e)}")
             print(f"Total request processing time (with error): {time.time() - start_time:.2f} seconds")
             return jsonify({'error': str(e)}), 500
+    
+    query = request.args.get('query', '')
+    
+    return render_template('index.html', query=query)
 
-    return render_template('index.html')
+
+@app.route('/youtube_search', methods=['POST'])
+def youtube_search():
+    start_time = time.time()
+    query = request.form['query']
+    
+    # Get YouTube results
+    yt_results = YoutubeSearch(query, max_results=10).to_dict()
+    
+    print(f"YouTube search route took {time.time() - start_time:.2f} seconds")
+    return jsonify({'youtube_results': yt_results})
 
 if __name__ == '__main__':
     app.run(debug=True)
