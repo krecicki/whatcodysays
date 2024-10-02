@@ -16,6 +16,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import pyarrow as pa
 from slugify import slugify
 from datetime import datetime
+import random
+from graph import enhance_search_results
 
 app = Flask(__name__)
 
@@ -43,7 +45,7 @@ if "search_results" not in db.table_names():
         ('gpt_relevance', pa.string()),
         ('slug', pa.string()),
         ('is_blog_post', pa.bool_()),
-        ('publish_date', pa.string())  # Change to microsecond precision
+        ('publish_date', pa.string())
     ])
     table = db.create_table("search_results", schema=schema)
 else:
@@ -53,51 +55,6 @@ else:
 search_results_df = table.to_pandas()
 
 print(f"Loaded {len(search_results_df)} rows from LanceDB")
-
-from flask import render_template
-from datetime import datetime
-
-@app.route('/blog')
-def blog():
-    global search_results_df
-    
-    # Convert publish_date to datetime objects
-    search_results_df['publish_date'] = pd.to_datetime(search_results_df['publish_date'])
-    
-    # Sort by publish_date in descending order and get unique entries
-    posts = search_results_df.sort_values('publish_date', ascending=False).drop_duplicates(subset=['query']).to_dict('records')
-    
-    # Ensure all required fields are present and format dates
-    for post in posts:
-        post['query'] = post.get('query', 'Untitled Search')
-        post['gpt_relevance'] = post.get('gpt_relevance', 'No AI-generated insights available.')
-        post['slug'] = post.get('slug', 'default-slug')
-        post['publish_date'] = post['publish_date'].strftime('%Y-%m-%d')
-    
-    return render_template('blog.html', posts=posts)
-
-@app.route('/blog/<slug>')
-def blog_post(slug):
-    global search_results_df
-    
-    post = search_results_df[search_results_df['slug'] == slug].iloc[0].to_dict()
-    query = post['query']
-    all_results = search_results_df[search_results_df['query'] == query].to_dict('records')
-    
-    # Get YouTube results
-    yt_results = YoutubeSearch(query, max_results=4).to_dict()
-    
-    # Get the GPT relevance
-    gpt_relevance = post['gpt_relevance']
-    print(gpt_relevance)
-    
-    return render_template('article.html', post=post, results=all_results, youtube_results=yt_results, gpt_relevance=gpt_relevance, result_count=len(all_results))
-
-def youtube_results(terms):
-    start_time = time.time()
-    results = YoutubeSearch(terms, max_results=10).to_json()
-    print(f"YouTube search took {time.time() - start_time:.2f} seconds")
-    return results
 
 def get_google_results(query, num_results=10):
     start_time = time.time()
@@ -160,17 +117,19 @@ def get_gpt_relevance(query, results):
 {result_summaries}
 1. Identify the most relevant result and explain why it's the best match, give the source url.
 2. If you can't provide a direct answer, explain what information is missing and suggest how the user might find it.
+3. Suggest 2-3 follow-up queries that might help explore this topic further.
 Format your response like this:
 Most Relevant Result: [Title of most relevant result]
 Direct Answer: [Concise answer to the likely question, or explanation of what's missing]
-Next Steps: [Suggestion for what the user should do next with a url]"""
+Next Steps: [Suggestion for what the user should do next with a url]
+Follow-up Queries: [List of 2-3 suggested follow-up queries]"""
         response = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that analyzes search results and provides quick, relevant answers."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=250
+            max_tokens=300
         )
         print(f"GPT analysis took {time.time() - start_time:.2f} seconds")
         return response.choices[0].message.content
@@ -211,8 +170,7 @@ def store_search_results(query, results, gpt_relevance):
         print(f"Error adding data to LanceDB: {str(e)}")
         print(f"Data sample: {data[0] if data else 'No data'}")
 
-
-def similarity_search(query, top_k=10, similarity_threshold=0.95):
+def similarity_search(query, top_k=10, similarity_threshold=0.9):
     global search_results_df
     
     if search_results_df.empty:
@@ -225,9 +183,9 @@ def similarity_search(query, top_k=10, similarity_threshold=0.95):
     # Check for exact matches first
     exact_matches = search_results_df[search_results_df['normalized_query'] == query]
     if not exact_matches.empty:
-        results = exact_matches.head(top_k).drop(['normalized_query'], axis=1)
+        results = exact_matches.head(top_k)
         gpt_relevance = results.iloc[0]['gpt_relevance']
-        return results.drop('gpt_relevance', axis=1).to_dict('records'), gpt_relevance
+        return results.drop(['normalized_query', 'gpt_relevance'], axis=1).to_dict('records'), gpt_relevance
     
     # If no exact match, use TF-IDF and cosine similarity for near-identical matches
     vectorizer = TfidfVectorizer()
@@ -238,24 +196,26 @@ def similarity_search(query, top_k=10, similarity_threshold=0.95):
     
     search_results_df['similarity'] = similarities
     
-    # Filter results based on the very high similarity threshold
+    # Filter results based on the similarity threshold
     similar_results = search_results_df[search_results_df['similarity'] >= similarity_threshold]
     
-    if similar_results.empty:
-        return [], None
+    if not similar_results.empty:
+        # Sort by similarity and get top_k results
+        similar_results = similar_results.sort_values('similarity', ascending=False).head(top_k)
+        
+        gpt_relevance = similar_results.iloc[0]['gpt_relevance']
+        
+        # Prepare results
+        results_list = similar_results.drop(['similarity', 'gpt_relevance', 'normalized_query'], axis=1).to_dict('records')
+        
+        # Clean up temporary columns
+        search_results_df = search_results_df.drop(['similarity', 'normalized_query'], axis=1)
+        
+        return results_list, gpt_relevance
     
-    # Sort by similarity and get top_k results
-    similar_results = similar_results.sort_values('similarity', ascending=False).head(top_k)
-    
-    gpt_relevance = similar_results.iloc[0]['gpt_relevance']
-    
-    # Prepare results
-    results_list = similar_results.drop(['similarity', 'gpt_relevance', 'normalized_query'], axis=1).to_dict('records')
-    
-    # Clean up temporary columns
-    search_results_df = search_results_df.drop(['similarity', 'normalized_query'], axis=1)
-    
-    return results_list, gpt_relevance
+    # If no similar results found, return empty list and None
+    search_results_df = search_results_df.drop(['normalized_query'], axis=1)
+    return [], None
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -306,17 +266,53 @@ def index():
                 # Store the new results
                 store_search_results(query, results, gpt_relevance)
 
-            print(f"Total request processing time: {time.time() - start_time:.2f} seconds")
-            return jsonify({'results': results, 'gpt_relevance': gpt_relevance, 'from_cache': False})
+                # Enhance and rank the results
+                enhanced_results = enhance_search_results(results)
+
+                print(f"Total request processing time: {time.time() - start_time:.2f} seconds")
+                return jsonify({'results': enhanced_results, 'gpt_relevance': gpt_relevance, 'from_cache': False, 'ranking_method': 'graph-based PageRank'})
         except Exception as e:
             print(f"Error occurred: {str(e)}")
             print(f"Total request processing time (with error): {time.time() - start_time:.2f} seconds")
             return jsonify({'error': str(e)}), 500
     
-    query = request.args.get('query', '')
-    
-    return render_template('index.html', query=query)
+    return render_template('index.html')
 
+@app.route('/blog')
+def blog():
+    global search_results_df
+    
+    # Convert publish_date to datetime objects
+    search_results_df['publish_date'] = pd.to_datetime(search_results_df['publish_date'])
+    
+    # Sort by publish_date in descending order and get unique entries
+    posts = search_results_df.sort_values('publish_date', ascending=False).drop_duplicates(subset=['query']).to_dict('records')
+    
+    # Ensure all required fields are present and format dates
+    for post in posts:
+        post['query'] = post.get('query', 'Untitled Search')
+        post['gpt_relevance'] = post.get('gpt_relevance', 'No AI-generated insights available.')
+        post['slug'] = post.get('slug', 'default-slug')
+        post['publish_date'] = post['publish_date'].strftime('%Y-%m-%d')
+    
+    return render_template('blog.html', posts=posts)
+
+@app.route('/blog/<slug>')
+def blog_post(slug):
+    global search_results_df
+    
+    post = search_results_df[search_results_df['slug'] == slug].iloc[0].to_dict()
+    query = post['query']
+    all_results = search_results_df[search_results_df['query'] == query].to_dict('records')
+    
+    # Get YouTube results
+    yt_results = YoutubeSearch(query, max_results=4).to_dict()
+    
+    # Get the GPT relevance
+    gpt_relevance = post['gpt_relevance']
+    print(gpt_relevance)
+    
+    return render_template('article.html', post=post, results=all_results, youtube_results=yt_results, gpt_relevance=gpt_relevance, result_count=len(all_results))
 
 @app.route('/youtube_search', methods=['POST'])
 def youtube_search():

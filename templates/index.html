@@ -88,13 +88,13 @@
             <div class="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500 mx-auto"></div>
             <p class="mt-4 text-gray-600">Searching across multiple engines...</p>
         </div>
-
+        
         <div id="resultCount" class="text-center mb-8 hidden">
-            <p class="text-2xl font-semibold text-gray-700"></p>
+            <p class="text-2xl font-semibold text-gray-700 hidden"></p>
         </div>
 
         <div id="fromCache" class="text-center mb-8 hidden">
-            <p class="text-lg text-green-600 font-medium">Results retrieved from cache</p>
+            <p class="text-lg text-green-600 font-medium hidden">Results retrieved from cache</p>
         </div>
 
         <div id="youtubeResults" class="mb-8 hidden">
@@ -111,6 +111,10 @@
         <div id="results" class="space-y-4">
             <!-- Search results will be inserted here -->
         </div>
+    </div>
+
+    <div id="rankingMethod" class="text-center mb-8 hidden">
+        <p class="text-lg text-blue-600 font-medium"></p>
     </div>
 
     <footer>

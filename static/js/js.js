@@ -14,6 +14,7 @@ function performSearch() {
     document.getElementById('gptRelevance').classList.add('hidden');
     document.getElementById('resultCount').classList.add('hidden');
     document.getElementById('fromCache').classList.add('hidden');
+    document.getElementById('rankingMethod').classList.add('hidden');
 
     fetch('/', {
         method: 'POST',
@@ -38,6 +39,10 @@ function performSearch() {
             displayGPTRelevance(data.gpt_relevance);
         }
 
+        if (data.ranking_method) {
+            displayRankingMethod(data.ranking_method);
+        }
+
         fetchYouTubeResults(query);
     })
     .catch(error => {
@@ -58,15 +63,26 @@ function displayResults(results) {
         const resultElement = document.createElement('div');
         resultElement.className = 'result-card p-4 bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-300 mb-4';
         resultElement.innerHTML = `
-            <h2 class="text-lg font-medium mb-1">
-                <a href="${result.url}" target="_blank" class="text-blue-600 hover:text-blue-800 transition duration-300">${result.title}</a>
-            </h2>
+            <div class="flex justify-between items-start">
+                <h2 class="text-lg font-medium mb-1">
+                    <a href="${result.url}" target="_blank" class="text-blue-600 hover:text-blue-800 transition duration-300">${result.title}</a>
+                </h2>
+                ${result.rank !== undefined ? `<span class="text-sm font-semibold bg-green-100 text-green-800 py-1 px-2 rounded">Rank: ${result.rank.toFixed(4)}</span>` : ''}
+            </div>
             <p class="text-xs text-gray-500 mb-2">${result.url}</p>
             <p class="text-sm text-gray-700 mb-2">${result.description}</p>
             <p class="text-xs text-gray-500">Source: ${result.source}</p>
         `;
         resultsContainer.appendChild(resultElement);
     });
+}
+
+function displayRankingMethod(method) {
+    const rankingMethodElement = document.getElementById('rankingMethod');
+    if (rankingMethodElement) {
+        rankingMethodElement.textContent = `Results ranked using: ${method}`;
+        rankingMethodElement.classList.remove('hidden');
+    }
 }
 
 function displayGPTRelevance(relevance) {
@@ -84,6 +100,16 @@ function displayGPTRelevance(relevance) {
                 // Check if the line is a title (ends with a colon)
                 if (line.trim().endsWith(':')) {
                     return `<h3 class="text-lg font-semibold text-blue-600 mb-2">${line}</h3>`;
+                } else if (line.startsWith('Follow-up Queries:')) {
+                    // Start an ordered list for follow-up queries
+                    return `<h3 class="text-lg font-semibold text-blue-600 mb-2">Follow-up Queries:</h3><ol class="list-decimal list-inside">`;
+                } else if (line.match(/^\d+\./)) {
+                    // This is a numbered query, make it a clickable list item
+                    const query = line.replace(/^\d+\.\s*/, '').trim();
+                    return `<li><a href="#" class="text-blue-600 hover:text-blue-800 cursor-pointer" onclick="searchQuery('${query.replace(/'/g, "\\'")}')">${query}</a></li>`;
+                } else if (line.trim() === '') {
+                    // Close the ordered list if we've reached the end of the queries
+                    return '</ol>';
                 } else {
                     return `<p class="text-gray-700 mb-2">${formatLinks(line)}</p>`;
                 }
@@ -94,6 +120,12 @@ function displayGPTRelevance(relevance) {
     }
 
     gptRelevanceElement.classList.remove('hidden');
+}
+
+// Add this function to handle the search when a query is clicked
+function searchQuery(query) {
+    document.getElementById('searchInput').value = query;
+    performSearch();
 }
 
 function formatLinks(text) {
@@ -176,72 +208,96 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function formatGPTRelevancearticle(content) {
-  // Create a container div
-  const container = document.createElement('div');
-  container.id = 'gptContent';
-  container.className = 'text-sm';
-
-  // Split the content into sections
-  const sections = content.split(/(?=Most Relevant Result:|Direct Answer:|Next Steps:)/);
-
-  sections.forEach(section => {
-    const p = document.createElement('p');
-    p.className = 'mb-4';
-
-    if (section.startsWith('Most Relevant Result:')) {
-      const strong = document.createElement('strong');
-      strong.textContent = 'Most Relevant Result: ';
-      p.appendChild(strong);
-      p.appendChild(document.createTextNode(section.replace('Most Relevant Result:', '').trim()));
-    } else if (section.startsWith('Direct Answer:')) {
-      const strong = document.createElement('strong');
-      strong.textContent = 'Direct Answer: ';
-      p.appendChild(strong);
-      p.appendChild(document.createTextNode(section.replace('Direct Answer:', '').trim()));
-    } else if (section.startsWith('Next Steps:')) {
-      const strong = document.createElement('strong');
-      strong.textContent = 'Next Steps: ';
-      p.appendChild(strong);
-      
-      const linkText = section.replace('Next Steps:', '').trim();
-      const linkMatch = linkText.match(/(https?:\/\/[^\s]+)/);
-      
-      if (linkMatch) {
-        const textBefore = linkText.substring(0, linkMatch.index);
-        p.appendChild(document.createTextNode(textBefore));
+    const container = document.createElement('div');
+    container.id = 'gptContent';
+    container.className = 'text-sm';
+  
+    const sections = content.split(/(?=Most Relevant Result:|Direct Answer:|Next Steps:|Follow-up Queries:)/);
+  
+    sections.forEach(section => {
+      const p = document.createElement('p');
+      p.className = 'mb-4';
+  
+      if (section.startsWith('Most Relevant Result:')) {
+        const strong = document.createElement('strong');
+        strong.textContent = 'Most Relevant Result: ';
+        p.appendChild(strong);
+        p.appendChild(document.createTextNode(section.replace('Most Relevant Result:', '').trim()));
+      } else if (section.startsWith('Direct Answer:')) {
+        const strong = document.createElement('strong');
+        strong.textContent = 'Direct Answer: ';
+        p.appendChild(strong);
+        p.appendChild(document.createTextNode(section.replace('Direct Answer:', '').trim()));
+      } else if (section.startsWith('Next Steps:')) {
+        const strong = document.createElement('strong');
+        strong.textContent = 'Next Steps: ';
+        p.appendChild(strong);
         
-        const link = document.createElement('a');
-        link.href = linkMatch[0];
-        link.textContent = linkMatch[0];
-        link.className = 'text-blue-600 hover:text-blue-800 underline';
-        link.target = '_blank';
+        const linkText = section.replace('Next Steps:', '').trim();
+        const linkMatch = linkText.match(/(https?:\/\/[^\s]+)/);
         
-        p.appendChild(link);
-        
-        const textAfter = linkText.substring(linkMatch.index + linkMatch[0].length);
-        if (textAfter) {
-          p.appendChild(document.createTextNode(textAfter));
+        if (linkMatch) {
+          const textBefore = linkText.substring(0, linkMatch.index);
+          p.appendChild(document.createTextNode(textBefore));
+          
+          const link = document.createElement('a');
+          link.href = linkMatch[0];
+          link.textContent = linkMatch[0];
+          link.className = 'text-blue-600 hover:text-blue-800 underline';
+          link.target = '_blank';
+          
+          p.appendChild(link);
+          
+          const textAfter = linkText.substring(linkMatch.index + linkMatch[0].length);
+          if (textAfter) {
+            p.appendChild(document.createTextNode(textAfter));
+          }
+        } else {
+          p.appendChild(document.createTextNode(linkText));
         }
-      } else {
-        p.appendChild(document.createTextNode(linkText));
+      } else if (section.startsWith('Follow-up Queries:')) {
+        const strong = document.createElement('strong');
+        strong.textContent = 'Follow-up Queries:';
+        p.appendChild(strong);
+        
+        const queriesList = document.createElement('ol');
+        queriesList.className = 'list-decimal list-inside mt-2';
+        
+        const queries = section.replace('Follow-up Queries:', '').trim().split(/\d+\.\s/).filter(q => q.trim() !== '');
+        
+        queries.forEach(query => {
+          const li = document.createElement('li');
+          const queryLink = document.createElement('a');
+          queryLink.href = '#';
+          queryLink.textContent = query.trim();
+          queryLink.className = 'text-blue-600 hover:text-blue-800 cursor-pointer';
+          queryLink.onclick = function(e) {
+            e.preventDefault();
+            document.getElementById('searchInput').value = query.trim();
+            performSearch();
+          };
+          li.appendChild(queryLink);
+          queriesList.appendChild(li);
+        });
+        
+        p.appendChild(queriesList);
       }
-    }
-
-    container.appendChild(p);
-  });
-
-  return container;
-}
-
-// Usage
-document.addEventListener('DOMContentLoaded', () => {
+  
+      container.appendChild(p);
+    });
+  
+    return container;
+  }
+  
+  // Usage remains the same
+  document.addEventListener('DOMContentLoaded', () => {
     const gptRelevanceElement = document.getElementById('gptRelevance');
     if (gptRelevanceElement) {
-        const gptContent = gptRelevanceElement.querySelector('#gptContent');
-        if (gptContent) {
-            const formattedContent = formatGPTRelevancearticle(gptContent.textContent);
-            gptContent.parentNode.replaceChild(formattedContent, gptContent);
-        }
+      const gptContent = gptRelevanceElement.querySelector('#gptContent');
+      if (gptContent) {
+        const formattedContent = formatGPTRelevancearticle(gptContent.textContent);
+        gptContent.parentNode.replaceChild(formattedContent, gptContent);
+      }
     }
 
     // New functionality: Trigger search if query is present in URL
