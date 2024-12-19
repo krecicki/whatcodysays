@@ -36,7 +36,21 @@ An intelligent search engine that combines results from multiple sources, enhanc
 1. Clone the repository
 2. Install dependencies:
 ```bash
-pip install -r requirements.txt
+flask>=2.0.0
+beautifulsoup4>=4.9.3
+requests>=2.25.1
+google>=3.0.0
+duckduckgo-search>=2.8.0
+youtube-search>=2.1.0
+python-dotenv>=0.19.0
+openai>=1.0.0
+lancedb>=0.1.0
+pandas>=1.3.0
+scikit-learn>=0.24.2
+pyarrow>=6.0.0
+python-slugify>=5.0.2
+networkx>=2.6.3
+concurrent-futures>=3.1.0
 ```
 3. Set up environment variables:
 ```bash
